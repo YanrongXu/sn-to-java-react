@@ -1,0 +1,64 @@
+{
+  "name": "sn-to-java-react",
+  "displayName": "ServiceNow → Java/React Converter (6-stage agentic pipeline)",
+  "description": "Six-stage pipeline (Extractor → Parser → Mapper → Generator → Validator → Assembler) converting a ServiceNow scoped application into a Spring Boot multi-module project. LLM calls route through GitHub Copilot via vscode.lm.",
+  "version": "0.2.0",
+  "publisher": "internal",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other", "AI", "Chat"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "snConvert.convertApplication", "title": "ServiceNow: Run Conversion Pipeline", "category": "ServiceNow Converter" },
+      { "command": "snConvert.connect", "title": "ServiceNow: Connect to Instance", "category": "ServiceNow Converter" },
+      { "command": "snConvert.listApplications", "title": "ServiceNow: List Scoped Applications", "category": "ServiceNow Converter" }
+    ],
+    "chatParticipants": [
+      {
+        "id": "snConvert.chat",
+        "name": "servicenow",
+        "fullName": "ServiceNow Converter",
+        "description": "Drive the 6-stage conversion pipeline interactively.",
+        "isSticky": true,
+        "commands": [
+          { "name": "convert",  "description": "Run the full 6-stage conversion." },
+          { "name": "explain",  "description": "Explain how an artifact would convert." },
+          { "name": "preview",  "description": "Preview generated code for one artifact." },
+          { "name": "validate", "description": "Re-run Stage 5 (Validator) on a previously generated project." }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "ServiceNow Converter",
+      "properties": {
+        "snConvert.instanceUrl": { "type": "string", "default": "", "description": "ServiceNow base URL." },
+        "snConvert.username":    { "type": "string", "default": "", "description": "ServiceNow username (password in SecretStorage)." },
+        "snConvert.javaPackage": { "type": "string", "default": "com.acme.converted", "description": "Base Java package for generated code." },
+        "snConvert.jdkVersion":  { "type": "string", "default": "21", "enum": ["17", "21"], "description": "Target JDK." },
+        "snConvert.springBootVersion": { "type": "string", "default": "3.3.4", "description": "Spring Boot version." },
+        "snConvert.copilotModel": { "type": "string", "default": "gpt-4o", "description": "Preferred Copilot model family." },
+        "snConvert.outputDirectory": { "type": "string", "default": "", "description": "Absolute path for generated projects (defaults to workspace folder)." },
+        "snConvert.runMavenValidation": { "type": "boolean", "default": true, "description": "Run `mvn compile` in Stage 5 (Validator). Disable if Maven is not on PATH." },
+        "snConvert.runCheckstyle": { "type": "boolean", "default": false, "description": "Add maven-checkstyle-plugin and run it in Stage 5." },
+        "snConvert.runSpotbugs":   { "type": "boolean", "default": false, "description": "Add spotbugs-maven-plugin and run it in Stage 5." }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/babel__traverse": "^7.20.5",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.24.0",
+    "@babel/traverse": "^7.24.0",
+    "@babel/types": "^7.24.0"
+  }
+}

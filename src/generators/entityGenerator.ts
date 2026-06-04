@@ -1,0 +1,204 @@
+import * as vscode from 'vscode';
+import * as path from 'path';
+import { CopilotLLM } from '../llm/copilot';
+import { ArtifactMapping, GeneratedFile } from '../pipeline/types';
+import { capitalize, stripPrefix, toCamel } from '../util/naming';
+import { SnColumn, SnTable } from '../servicenow/types';
+
+/**
+ * Produces entity + repository + DTO from a table mapping. Structural
+ * mapping is deterministic. We ask Copilot to suggest *names* only,
+ * and require JSON so the response is shape-checkable.
+ */
+export class EntityGenerator {
+  constructor(private readonly llm: CopilotLLM, private readonly basePackage: string, private readonly outRoot: string) {}
+
+  async generate(mapping: ArtifactMapping, token: vscode.CancellationToken): Promise<GeneratedFile[]> {
+    if (mapping.source.kind !== 'table') return [];
+    const table = mapping.source.data;
+
+    const naming = await this.askForNames(table, token);
+
+    const entityTarget = mapping.targets.find(t => t.kind === 'entity')!;
+    const repoTarget   = mapping.targets.find(t => t.kind === 'repository')!;
+    const dtoTarget    = mapping.targets.find(t => t.kind === 'dto')!;
+
+    const entityName = naming.entityName;
+    const fields = table.columns.map(c => ({
+      sn: c,
+      javaName: naming.fields[c.element] ?? toCamel(stripPrefix(c.element)),
+      javaType: mapType(c)
+    }));
+
+    return [
+      {
+        path: path.join(this.outRoot, 'domain/src/main/java', this.toPath('domain'), entityTarget.relativePath),
+        content: this.renderEntity(table, entityName, fields),
+        language: 'java',
+        origin: table.sys_id,
+        llmInvolved: true
+      },
+      {
+        path: path.join(this.outRoot, 'domain/src/main/java', this.toPath('domain'), repoTarget.relativePath),
+        content: this.renderRepository(entityName),
+        language: 'java',
+        origin: table.sys_id,
+        llmInvolved: false
+      },
+      {
+        path: path.join(this.outRoot, 'api/src/main/java', this.toPath('api'), dtoTarget.relativePath),
+        content: this.renderDto(entityName, fields),
+        language: 'java',
+        origin: table.sys_id,
+        llmInvolved: false
+      }
+    ];
+  }
+
+  private toPath(mod: string): string {
+    return (this.basePackage + '.' + mod).replace(/\./g, '/');
+  }
+
+  private async askForNames(table: SnTable, token: vscode.CancellationToken) {
+    const fallback = {
+      entityName: capitalize(toCamel(stripPrefix(table.name))),
+      fields: Object.fromEntries(table.columns.map(c => [c.element, toCamel(stripPrefix(c.element))]))
+    };
+    try {
+      const prompt = `Map ServiceNow identifiers to idiomatic Java names. Reply ONLY with JSON.
+
+Table:
+  name:  ${table.name}
+  label: ${table.label}
+
+Columns:
+${table.columns.map(c => `  - ${c.element} (${c.column_label})`).join('\n')}
+
+Required JSON:
+{ "entityName": "PascalCase", "fields": { "<sn_column>": "camelCaseField", ... } }
+
+Rules: strip prefixes (u_, x_*); short, idiomatic Java names; do not invent fields.`;
+      const json = await this.llm.complete({
+        system: 'You output only valid JSON with no markdown, fences, or commentary.',
+        user: prompt,
+        token,
+        json: true
+      });
+      const parsed = JSON.parse(json);
+      if (!parsed.entityName || typeof parsed.fields !== 'object') return fallback;
+      return parsed;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private renderEntity(table: SnTable, entityName: string, fields: { sn: SnColumn; javaName: string; javaType: string }[]): string {
+    const pkg = `${this.basePackage}.domain`;
+    const imports = new Set<string>(['jakarta.persistence.*', 'java.io.Serializable']);
+    if (fields.some(f => f.javaType === 'BigDecimal'))   imports.add('java.math.BigDecimal');
+    if (fields.some(f => f.javaType === 'LocalDateTime')) imports.add('java.time.LocalDateTime');
+    if (fields.some(f => f.javaType === 'LocalDate'))     imports.add('java.time.LocalDate');
+
+    const fieldLines = fields
+      .map(f => {
+        const annotation = `@Column(name = "${f.sn.element}"${f.sn.max_length ? `, length = ${f.sn.max_length}` : ''}${f.sn.mandatory ? ', nullable = false' : ''})`;
+        const refNote = f.sn.internal_type === 'reference'
+          ? '\n    // TODO(sn-convert): reference column; consider promoting to @ManyToOne'
+          : '';
+        return `    ${annotation}${refNote}\n    private ${f.javaType} ${f.javaName};`;
+      })
+      .join('\n\n');
+
+    const accessors = fields
+      .map(
+        f => `    public ${f.javaType} get${capitalize(f.javaName)}() { return ${f.javaName}; }
+    public void set${capitalize(f.javaName)}(${f.javaType} ${f.javaName}) { this.${f.javaName} = ${f.javaName}; }`
+      )
+      .join('\n\n');
+
+    return `package ${pkg}.entity;
+
+${[...imports].sort().map(i => `import ${i};`).join('\n')}
+
+/**
+ * Mirrors ServiceNow table ${table.name} (${table.label}).
+ * Generated by sn-to-java-react Stage 4. Schema is materialised by Liquibase.
+ */
+@Entity
+@Table(name = "${table.name}")
+public class ${entityName} implements Serializable {
+
+    @Id
+    @Column(name = "sys_id", length = 32, nullable = false)
+    private String sysId;
+
+${fieldLines}
+
+    public String getSysId() { return sysId; }
+    public void setSysId(String sysId) { this.sysId = sysId; }
+
+${accessors}
+}
+`;
+  }
+
+  private renderRepository(entityName: string): string {
+    const pkg = `${this.basePackage}.domain`;
+    return `package ${pkg}.repository;
+
+import ${pkg}.entity.${entityName};
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface ${entityName}Repository extends JpaRepository<${entityName}, String> {
+}
+`;
+  }
+
+  private renderDto(entityName: string, fields: { javaName: string; javaType: string }[]): string {
+    const pkg = `${this.basePackage}.api`;
+    const fieldLines = fields.map(f => `    private ${f.javaType} ${f.javaName};`).join('\n');
+    const accessors = fields
+      .map(
+        f => `    public ${f.javaType} get${capitalize(f.javaName)}() { return ${f.javaName}; }
+    public void set${capitalize(f.javaName)}(${f.javaType} ${f.javaName}) { this.${f.javaName} = ${f.javaName}; }`
+      )
+      .join('\n\n');
+    return `package ${pkg}.dto;
+
+import java.io.Serializable;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+public class ${entityName}Dto implements Serializable {
+    private String sysId;
+${fieldLines}
+
+    public String getSysId() { return sysId; }
+    public void setSysId(String sysId) { this.sysId = sysId; }
+
+${accessors}
+}
+`;
+  }
+}
+
+export function mapType(c: SnColumn): string {
+  switch (c.internal_type) {
+    case 'integer':
+    case 'longint':         return 'Long';
+    case 'decimal':
+    case 'currency':
+    case 'price':
+    case 'float':           return 'BigDecimal';
+    case 'boolean':         return 'Boolean';
+    case 'glide_date':      return 'LocalDate';
+    case 'glide_date_time':
+    case 'glide_time':
+    case 'due_date':        return 'LocalDateTime';
+    case 'reference':       return 'String'; // FK sys_id; promote to @ManyToOne manually
+    default:                return 'String';
+  }
+}
