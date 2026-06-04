@@ -6,14 +6,13 @@ import { sanitizeArtifactId } from '../util/naming';
 
 /**
  * Builds the *structural* skeleton of the project: parent + module POMs,
- * application.yml (database-agnostic, env-driven), Spring main class,
+ * Spring profile YAML (dev = H2, prod = SQL Server), Spring main class,
  * Vite/React project files. These don't depend on any LLM call.
  *
- * Database is intentionally not pinned. The generated POM declares
- * spring-boot-starter-jdbc as a runtime dep but does NOT include any
- * specific JDBC driver — the operator supplies one on the classpath
- * or via `mvn -Dspring-boot.run.jvmArguments=...`. application.yml
- * reads ${DATASOURCE_URL}, ${DB_USER}, ${DB_PASSWORD} from the env.
+ * Dev uses embedded H2 in MSSQLServer compatibility mode so Liquibase/JPA
+ * behave closer to production SQL Server. Prod reads ${DATASOURCE_URL},
+ * ${DB_USER}, ${DB_PASSWORD}. Both JDBC drivers are on the web module
+ * classpath; activate with SPRING_PROFILES_ACTIVE (default: dev).
  */
 export function buildStructuralFiles(app: SnApplication, basePackage: string, outRoot: string): GeneratedFile[] {
   const cfg = vscode.workspace.getConfiguration('snConvert');
@@ -45,11 +44,26 @@ export function buildStructuralFiles(app: SnApplication, basePackage: string, ou
     });
   }
 
-  // application.yml
+  // application.yml + dev (H2) / prod (SQL Server) profiles
+  const resourcesDir = path.join(backendRoot, 'web/src/main/resources');
+  for (const [name, content] of [
+    ['application.yml', applicationYml(app)],
+    ['application-dev.yml', applicationDevYml(app)],
+    ['application-prod.yml', applicationProdYml()]
+  ] as const) {
+    files.push({
+      path: path.join(resourcesDir, name),
+      content,
+      language: 'yaml',
+      structural: true,
+      llmInvolved: false
+    });
+  }
+
   files.push({
-    path: path.join(backendRoot, 'web/src/main/resources/application.yml'),
-    content: applicationYml(app),
-    language: 'yaml',
+    path: path.join(backendRoot, '.gitignore'),
+    content: backendGitignore(),
+    language: 'properties',
     structural: true,
     llmInvolved: false
   });
@@ -149,6 +163,8 @@ function modulePom(basePackage: string, artifactBase: string, mod: 'api' | 'doma
     deps.push('<dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>');
     deps.push(`<dependency><groupId>${basePackage}</groupId><artifactId>${artifactBase}-service</artifactId></dependency>`);
     deps.push(`<dependency><groupId>${basePackage}</groupId><artifactId>${artifactBase}-api</artifactId></dependency>`);
+    deps.push('<dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>runtime</scope></dependency>');
+    deps.push('<dependency><groupId>com.microsoft.sqlserver</groupId><artifactId>mssql-jdbc</artifactId><scope>runtime</scope></dependency>');
   }
   deps.push('<dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>');
 
@@ -170,14 +186,11 @@ function modulePom(basePackage: string, artifactBase: string, mod: 'api' | 'doma
 }
 
 function applicationYml(app: SnApplication): string {
-  // Database-agnostic. Driver and dialect resolved at runtime from JDBC URL.
   return `spring:
   application:
     name: ${app.scope}
-  datasource:
-    url: \${DATASOURCE_URL}
-    username: \${DB_USER}
-    password: \${DB_PASSWORD}
+  profiles:
+    active: \${SPRING_PROFILES_ACTIVE:dev}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -188,6 +201,37 @@ function applicationYml(app: SnApplication): string {
 
 server:
   port: 8080
+`;
+}
+
+function applicationDevYml(app: SnApplication): string {
+  const dbFile = app.scope.replace(/[^a-zA-Z0-9_-]+/g, '_');
+  return `spring:
+  datasource:
+    url: jdbc:h2:file:./data/${dbFile};MODE=MSSQLServer;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+`;
+}
+
+function applicationProdYml(): string {
+  return `spring:
+  datasource:
+    url: \${DATASOURCE_URL}
+    username: \${DB_USER}
+    password: \${DB_PASSWORD}
+`;
+}
+
+function backendGitignore(): string {
+  return `target/
+data/
+*.log
 `;
 }
 

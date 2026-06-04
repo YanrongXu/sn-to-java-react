@@ -11,7 +11,7 @@ A VS Code extension that converts a ServiceNow scoped application into a Spring 
 | 3 | **Mapper** | Produces a `SemanticPlan`: which SN artifact lands in which Maven module and which Java class kind (entity/repository/dto/service/utility/controller/securityRule). Deterministic — routing decisions are policy, not LLM output. | no |
 | 4 | **Generator** | Per-artifact code generation. Each generator receives Stage 2's parsed patterns alongside the raw script, so prompts are *grounded* — Copilot is asked to translate, not reverse-engineer. Returns `GeneratedFile[]` in memory. | yes (Copilot) |
 | 5 | **Validator** | Writes Stage 4 files to disk, generates JUnit 5 stubs (one per Java class, kind-aware), spawns `mvn compile` and parses errors/warnings line-by-line. Optional CheckStyle and SpotBugs. | no |
-| 6 | **Assembler** | Writes the structural envelope: parent + module POMs, `application.yml` (env-driven, **no JDBC driver pinned**), `Application.java`, Vite/React project files. Aggregates ACLs into a single `SecurityFilterChain`. Generates the Liquibase changelog tree (master + per-table changesets). Writes `CONVERSION_REPORT.md` summarising every stage. | no |
+| 6 | **Assembler** | Writes the structural envelope: parent + module POMs, `application.yml` + **dev (H2) / prod (SQL Server)** profiles, `Application.java`, Vite/React project files. Aggregates ACLs into a single `SecurityFilterChain`. Generates the Liquibase changelog tree (master + per-table changesets). Writes `CONVERSION_REPORT.md` summarising every stage. | no |
 
 Each stage takes the previous stage's typed output and returns its own — handoffs are in `src/pipeline/types.ts`.
 
@@ -50,19 +50,28 @@ src/
 └── util/                       # naming helpers, SecretStorage credentials
 ```
 
-## Database posture (no version pinning)
+## Database posture (H2 dev → SQL Server prod)
 
-The generated POMs do **not** declare any specific JDBC driver. The runtime resolves driver + dialect from `${DATASOURCE_URL}`. Liquibase carries the schema portably:
+Generated backends default to the **`dev`** profile: embedded **H2** on disk (`backend/data/`, gitignored) with `MODE=MSSQLServer` so SQL types and Liquibase changesets stay closer to production **SQL Server**. H2 console is at `/h2-console` (you may need to permit it in `SecurityConfig` if Spring Security blocks it).
+
+**Local dev (default):**
 
 ```bash
-export DATASOURCE_URL=jdbc:postgresql://localhost:5432/myscope
-export DB_USER=app
-export DB_PASSWORD=app
 cd backend && mvn -pl web spring-boot:run
-# add a driver dep to web/pom.xml or supply one on the classpath
+# optional: SPRING_PROFILES_ACTIVE=dev (already the default)
 ```
 
-If you need Oracle, add `com.oracle.database.jdbc:ojdbc11` to `web/pom.xml` — but that's your runtime choice, not the converter's policy.
+**SQL Server (prod profile):**
+
+```bash
+export SPRING_PROFILES_ACTIVE=prod
+export DATASOURCE_URL="jdbc:sqlserver://localhost:1433;databaseName=myscope;encrypt=true;trustServerCertificate=true"
+export DB_USER=app
+export DB_PASSWORD=secret
+cd backend && mvn -pl web spring-boot:run
+```
+
+`web/pom.xml` includes both `h2` and `mssql-jdbc` (versions from the Spring Boot BOM). Liquibase changelogs stay database-agnostic; re-run the same migrations when you switch profiles.
 
 ## Settings
 
