@@ -83,8 +83,10 @@ If you need Oracle, add `com.oracle.database.jdbc:ojdbc11` to `web/pom.xml` — 
 
 1. `ServiceNow: Connect to Instance` — store the URL + creds (password to SecretStorage).
 2. `ServiceNow: List Scoped Applications` — copy the sys_id you want.
-3. `ServiceNow: Run Conversion Pipeline` — paste the sys_id (or scope name like `x_acme_orders`); a notification streams Stage 1 → Stage 6 progress.
-4. Open `CONVERSION_REPORT.md` in the generated project root — every error, warning, and TODO is listed by stage.
+3. `ServiceNow: Scan UI Artifacts and Generate TODO` — creates a deterministic migration checklist from discovered UI Pages, Client Scripts, REST endpoints, and ACL follow-ups (existing checked items are preserved on re-scan).
+4. `ServiceNow: Open Pipeline Progress View` — optional dashboard for real-time stage status + logs.
+5. `ServiceNow: Run Conversion Pipeline` — paste the sys_id (or scope name like `x_acme_orders`); a notification streams Stage 1 → Stage 6 progress and the progress view updates in parallel.
+6. Open `CONVERSION_REPORT.md` in the generated project root — every error, warning, and TODO is listed by stage.
 
 The `@servicenow` chat participant supports `/convert`, `/explain`, `/preview`, `/validate` for interactive exploration without running a full conversion.
 

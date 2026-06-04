@@ -12,7 +12,9 @@
     "commands": [
       { "command": "snConvert.convertApplication", "title": "ServiceNow: Run Conversion Pipeline", "category": "ServiceNow Converter" },
       { "command": "snConvert.connect", "title": "ServiceNow: Connect to Instance", "category": "ServiceNow Converter" },
-      { "command": "snConvert.listApplications", "title": "ServiceNow: List Scoped Applications", "category": "ServiceNow Converter" }
+      { "command": "snConvert.listApplications", "title": "ServiceNow: List Scoped Applications", "category": "ServiceNow Converter" },
+      { "command": "snConvert.openProgressView", "title": "ServiceNow: Open Pipeline Progress View", "category": "ServiceNow Converter" },
+      { "command": "snConvert.generateUiTodo", "title": "ServiceNow: Scan UI Artifacts and Generate TODO", "category": "ServiceNow Converter" }
     ],
     "chatParticipants": [
       {

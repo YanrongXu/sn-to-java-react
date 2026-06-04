@@ -43,13 +43,20 @@ function parseJavaMeta(f: GeneratedFile): JavaMeta | undefined {
 
 function toTestPath(srcPath: string): string | undefined {
   // .../<mod>/src/main/java/... -> .../<mod>/src/test/java/.../<Cls>Test.java
-  const i = srcPath.indexOf('/src/main/java/');
-  if (i < 0) return undefined;
-  const head = srcPath.slice(0, i);
-  const rest = srcPath.slice(i + '/src/main/java/'.length);
-  const dir = path.dirname(rest);
-  const base = path.basename(rest).replace(/\.java$/, '');
-  return `${head}/src/test/java/${dir}/${base}Test.java`;
+  // Works on both POSIX and Windows path separators.
+  const parts = srcPath.split(/[\\/]/);
+  const srcIdx = parts.findIndex(
+    (part, i) => part === 'src' && parts[i + 1] === 'main' && parts[i + 2] === 'java'
+  );
+  if (srcIdx < 0) return undefined;
+
+  const head = parts.slice(0, srcIdx);
+  const javaPath = parts.slice(srcIdx + 3);
+  const file = javaPath.pop();
+  if (!file) return undefined;
+
+  const base = file.replace(/\.java$/, '');
+  return path.join(...head, 'src', 'test', 'java', ...javaPath, `${base}Test.java`);
 }
 
 type StubKind = 'entity' | 'repository' | 'service' | 'controller' | 'utility' | 'config' | 'other';

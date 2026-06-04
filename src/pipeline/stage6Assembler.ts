@@ -30,19 +30,21 @@ export class AssemblerAgent {
     plan: SemanticPlan;
     extracted: ExtractedBundle;
     generatedFiles: GeneratedFile[];
+    structuralFiles?: GeneratedFile[];
     validation: ValidationResult;
     token: vscode.CancellationToken;
   }): Promise<AssembledProject> {
-    const { plan, extracted, generatedFiles, validation } = args;
+    const { plan, extracted, generatedFiles, structuralFiles, validation } = args;
 
-    // 1. Structural files (POMs, app.yml, main class, React scaffolding).
-    const structural = buildStructuralFiles(extracted.application, plan.basePackage, this.outRoot);
-    // 2. Liquibase changelogs.
-    const liquibase  = buildLiquibase(extracted.tables, this.outRoot);
-    // 3. Aggregated SecurityConfig from ACLs.
-    const security   = buildSecurityConfig(extracted.acls, plan.basePackage, this.outRoot);
-
-    const additions = [...structural, ...liquibase, security];
+    // Structural files may already be prepared/written before validation so
+    // Stage 5 can run mvn against a complete Maven project layout.
+    const additions =
+      structuralFiles ??
+      [
+        ...buildStructuralFiles(extracted.application, plan.basePackage, this.outRoot),
+        ...buildLiquibase(extracted.tables, this.outRoot),
+        buildSecurityConfig(extracted.acls, plan.basePackage, this.outRoot)
+      ];
 
     // Write everything that's not already on disk. Stage 5 wrote generatedFiles
     // before running mvn; here we add the rest.

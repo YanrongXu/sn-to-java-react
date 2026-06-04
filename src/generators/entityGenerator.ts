@@ -23,7 +23,8 @@ export class EntityGenerator {
     const repoTarget   = mapping.targets.find(t => t.kind === 'repository')!;
     const dtoTarget    = mapping.targets.find(t => t.kind === 'dto')!;
 
-    const entityName = naming.entityName;
+    // Keep file path and public class name deterministic and aligned with Stage 3.
+    const entityName = entityTarget.className;
     const fields = table.columns.map(c => ({
       sn: c,
       javaName: naming.fields[c.element] ?? toCamel(stripPrefix(c.element)),

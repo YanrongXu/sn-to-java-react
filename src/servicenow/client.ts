@@ -188,16 +188,82 @@ export class ServiceNowClient {
       sysparm_query: `sys_scope.scope=${scope}^active=true`,
       sysparm_fields: 'sys_id,name,operation,script,condition'
     });
-    // Roles live on sys_security_acl_role (m2m). Fetch separately per ACL only if needed; left as TODO for brevity.
+    const roleMap = await this.fetchAclRoles(rows.map(r => String(r.sys_id)).filter(Boolean));
+
     return rows.map(r => ({
       sys_id: r.sys_id,
       name: r.name,
-      table: r.name.split('.')[0],
+      table: typeof r.name === 'string' ? r.name.split('.')[0] : '',
       operation: r.operation,
-      roles: [],
+      roles: roleMap.get(String(r.sys_id)) ?? [],
       script: r.script,
       condition: r.condition
     }));
+  }
+
+  private async fetchAclRoles(aclIds: string[]): Promise<Map<string, string[]>> {
+    if (!aclIds.length) return new Map();
+
+    const aclToRoleIds = new Map<string, Set<string>>();
+    const roleIds = new Set<string>();
+
+    for (const chunk of this.chunk(aclIds, 80)) {
+      const rows = await this.queryTable<any>('sys_security_acl_role', {
+        sysparm_query: `sys_security_aclIN${chunk.join(',')}`,
+        sysparm_fields: 'sys_security_acl,sys_user_role'
+      });
+
+      for (const row of rows) {
+        const aclId = this.refValue(row.sys_security_acl);
+        const roleId = this.refValue(row.sys_user_role);
+        if (!aclId || !roleId) continue;
+        const set = aclToRoleIds.get(aclId) ?? new Set<string>();
+        set.add(roleId);
+        aclToRoleIds.set(aclId, set);
+        roleIds.add(roleId);
+      }
+    }
+
+    if (!roleIds.size) return new Map();
+
+    const roleNameById = new Map<string, string>();
+    for (const chunk of this.chunk([...roleIds], 80)) {
+      const roles = await this.queryTable<any>('sys_user_role', {
+        sysparm_query: `sys_idIN${chunk.join(',')}`,
+        sysparm_fields: 'sys_id,name'
+      });
+      for (const role of roles) {
+        const id = String(role.sys_id ?? '');
+        const name = String(role.name ?? '').trim();
+        if (id && name) roleNameById.set(id, name);
+      }
+    }
+
+    const result = new Map<string, string[]>();
+    for (const [aclId, ids] of aclToRoleIds) {
+      const names = [...ids]
+        .map(id => roleNameById.get(id))
+        .filter((name): name is string => !!name);
+      result.set(aclId, [...new Set(names)].sort((a, b) => a.localeCompare(b)));
+    }
+    return result;
+  }
+
+  private refValue(v: unknown): string | undefined {
+    if (!v) return undefined;
+    if (typeof v === 'string') return v;
+    if (typeof v === 'object' && v !== null && 'value' in v && typeof (v as { value?: unknown }).value === 'string') {
+      return (v as { value: string }).value;
+    }
+    return undefined;
+  }
+
+  private chunk<T>(items: T[], size: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) {
+      out.push(items.slice(i, i + size));
+    }
+    return out;
   }
 
   // ---------- Plumbing ----------
